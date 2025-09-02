@@ -3,7 +3,6 @@ import pickle
 import numpy as np
 from tensorflow.keras.models import load_model
 from tensorflow.keras.preprocessing.sequence import pad_sequences
-from tensorflow.keras.preprocessing.text import Tokenizer
 from django.conf import settings
 import logging
 from pathlib import Path
@@ -49,28 +48,7 @@ class MentalHealthPredictor:
             logger.info(f"Files in models directory: {model_files}")
             print(f"DEBUG: Files in models directory: {model_files}")
             
-            # Load tokenizer first
-            tokenizer_file = model_path / 'tokenizer.pkl'
-            if tokenizer_file.exists():
-                logger.info(f"Loading tokenizer from: {tokenizer_file}")
-                print(f"DEBUG: Loading tokenizer from: {tokenizer_file}")
-                try:
-                    with open(tokenizer_file, 'rb') as f:
-                        self.tokenizer = pickle.load(f)
-                    logger.info("Tokenizer loaded successfully")
-                    print("DEBUG: Tokenizer loaded successfully")
-                except Exception as e:
-                    error_msg = f"Error loading tokenizer: {str(e)}"
-                    logger.error(error_msg)
-                    print(f"DEBUG: {error_msg}")
-                    raise Exception(error_msg)
-            else:
-                error_msg = f"Tokenizer file not found at {tokenizer_file}"
-                logger.error(error_msg)
-                print(f"DEBUG: {error_msg}")
-                raise FileNotFoundError(error_msg)
-            
-            # Load label encoder
+            # Load label encoder first (simplest component)
             encoder_file = model_path / 'subreddit_label_encoder.pkl'
             if encoder_file.exists():
                 logger.info(f"Loading label encoder from: {encoder_file}")
@@ -80,6 +58,7 @@ class MentalHealthPredictor:
                         self.label_encoder = pickle.load(f)
                     logger.info("Label encoder loaded successfully")
                     print("DEBUG: Label encoder loaded successfully")
+                    print(f"DEBUG: Label encoder classes: {self.label_encoder.classes_}")
                 except Exception as e:
                     error_msg = f"Error loading label encoder: {str(e)}"
                     logger.error(error_msg)
@@ -91,7 +70,44 @@ class MentalHealthPredictor:
                 print(f"DEBUG: {error_msg}")
                 raise FileNotFoundError(error_msg)
             
-            # Load the LSTM model with multiple approaches
+            # Load tokenizer with compatibility handling
+            tokenizer_file = model_path / 'tokenizer.pkl'
+            if tokenizer_file.exists():
+                logger.info(f"Loading tokenizer from: {tokenizer_file}")
+                print(f"DEBUG: Loading tokenizer from: {tokenizer_file}")
+                try:
+                    # Try loading with different pickle protocols
+                    with open(tokenizer_file, 'rb') as f:
+                        self.tokenizer = pickle.load(f)
+                    logger.info("Tokenizer loaded successfully")
+                    print("DEBUG: Tokenizer loaded successfully")
+                    print(f"DEBUG: Tokenizer word_index size: {len(self.tokenizer.word_index) if hasattr(self.tokenizer, 'word_index') else 'N/A'}")
+                except Exception as e:
+                    error_msg = f"Error loading tokenizer: {str(e)}"
+                    logger.error(error_msg)
+                    print(f"DEBUG: {error_msg}")
+                    
+                    # Try alternative loading method
+                    try:
+                        print("DEBUG: Trying alternative tokenizer loading method...")
+                        import sys
+                        sys.modules['keras.src'] = tf.keras  # Compatibility fix
+                        with open(tokenizer_file, 'rb') as f:
+                            self.tokenizer = pickle.load(f)
+                        logger.info("Tokenizer loaded with compatibility fix")
+                        print("DEBUG: Tokenizer loaded with compatibility fix")
+                    except Exception as e2:
+                        error_msg = f"All tokenizer loading methods failed: {str(e2)}"
+                        logger.error(error_msg)
+                        print(f"DEBUG: {error_msg}")
+                        raise Exception(error_msg)
+            else:
+                error_msg = f"Tokenizer file not found at {tokenizer_file}"
+                logger.error(error_msg)
+                print(f"DEBUG: {error_msg}")
+                raise FileNotFoundError(error_msg)
+            
+            # Load the LSTM model with compatibility fixes
             model_file = model_path / 'subreddit_lstm_model.keras'
             if model_file.exists():
                 logger.info(f"Loading model from: {model_file}")
@@ -99,17 +115,23 @@ class MentalHealthPredictor:
                 print(f"DEBUG: Model file size: {model_file.stat().st_size} bytes")
                 
                 try:
-                    # Method 1: Standard load_model
+                    # Add compatibility fixes for different TensorFlow versions
+                    import sys
+                    if 'keras.src' not in sys.modules:
+                        sys.modules['keras.src'] = tf.keras
+                    
+                    # Method 1: Standard load_model with compatibility
+                    print("DEBUG: Trying standard load_model...")
                     self.model = load_model(str(model_file))
-                    logger.info("LSTM model loaded successfully with load_model")
-                    print("DEBUG: LSTM model loaded successfully with load_model")
+                    logger.info("LSTM model loaded successfully")
+                    print("DEBUG: LSTM model loaded successfully")
                     
                 except Exception as e1:
                     print(f"DEBUG: Standard load_model failed: {str(e1)}")
                     
                     try:
                         # Method 2: Load with compile=False
-                        print("DEBUG: Trying to load with compile=False")
+                        print("DEBUG: Trying to load with compile=False...")
                         self.model = load_model(str(model_file), compile=False)
                         logger.info("LSTM model loaded successfully with compile=False")
                         print("DEBUG: LSTM model loaded successfully with compile=False")
@@ -118,40 +140,26 @@ class MentalHealthPredictor:
                         print(f"DEBUG: Load with compile=False failed: {str(e2)}")
                         
                         try:
-                            # Method 3: Load with custom options
-                            print("DEBUG: Trying to load with custom options")
-                            self.model = tf.keras.models.load_model(
-                                str(model_file),
-                                custom_objects=None,
-                                compile=False,
-                                safe_mode=False
-                            )
-                            logger.info("LSTM model loaded successfully with custom options")
-                            print("DEBUG: LSTM model loaded successfully with custom options")
-                            
-                        except Exception as e3:
-                            print(f"DEBUG: Load with custom options failed: {str(e3)}")
-                            
-                            # Try fallback to .h5 file
+                            # Method 3: Try loading as .h5 if .keras fails
                             h5_file = model_path / 'subreddit_lstm_model.h5'
                             if h5_file.exists():
-                                print(f"DEBUG: Trying fallback .h5 file: {h5_file}")
-                                try:
-                                    self.model = load_model(str(h5_file))
-                                    logger.info("LSTM model loaded successfully from .h5 file")
-                                    print("DEBUG: LSTM model loaded successfully from .h5 file")
-                                except Exception as e4:
-                                    error_msg = f"All model loading methods failed. Last error: {str(e4)}"
-                                    logger.error(error_msg)
-                                    print(f"DEBUG: {error_msg}")
-                                    raise Exception(error_msg)
+                                print(f"DEBUG: Trying .h5 file: {h5_file}")
+                                self.model = load_model(str(h5_file))
+                                logger.info("LSTM model loaded from .h5 file")
+                                print("DEBUG: LSTM model loaded from .h5 file")
                             else:
-                                error_msg = f"All model loading methods failed. Errors: keras={str(e1)}, compile=False={str(e2)}, custom={str(e3)}"
+                                error_msg = f"All model loading methods failed. Errors: keras={str(e1)}, compile=False={str(e2)}"
                                 logger.error(error_msg)
                                 print(f"DEBUG: {error_msg}")
                                 raise Exception(error_msg)
+                                
+                        except Exception as e3:
+                            error_msg = f"All model loading methods failed. Final error: {str(e3)}"
+                            logger.error(error_msg)
+                            print(f"DEBUG: {error_msg}")
+                            raise Exception(error_msg)
             else:
-                error_msg = f"No .keras model file found at {model_file}"
+                error_msg = f"Model file not found at {model_file}"
                 logger.error(error_msg)
                 print(f"DEBUG: {error_msg}")
                 raise FileNotFoundError(error_msg)
@@ -163,9 +171,22 @@ class MentalHealthPredictor:
                 print(f"DEBUG: {error_msg}")
                 raise ValueError(error_msg)
             
+            # Test the model with a simple prediction to ensure it works
+            try:
+                print("DEBUG: Testing model with sample input...")
+                test_sequences = self.tokenizer.texts_to_sequences(["test input"])
+                test_padded = pad_sequences(test_sequences, maxlen=self.max_length, padding="post", truncating="post")
+                test_prediction = self.model.predict(test_padded, verbose=0)
+                print(f"DEBUG: Model test successful, output shape: {test_prediction.shape}")
+            except Exception as e:
+                error_msg = f"Model test failed: {str(e)}"
+                logger.error(error_msg)
+                print(f"DEBUG: {error_msg}")
+                raise Exception(error_msg)
+            
             self._models_loaded = True
-            logger.info("All models loaded successfully!")
-            print("DEBUG: All models loaded successfully!")
+            logger.info("All models loaded and tested successfully!")
+            print("DEBUG: All models loaded and tested successfully!")
             return True
                 
         except Exception as e:
