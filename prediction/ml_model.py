@@ -14,26 +14,39 @@ class MentalHealthPredictor:
         self.tokenizer = None
         self.label_encoder = None
         self.max_length = 100  # Adjust based on your model training
-        self.load_models()
+        self._models_loaded = False
+        self._load_error = None
     
-    def load_models(self):
-        """Load the trained LSTM model and preprocessing components"""
+    def _lazy_load_models(self):
+        """Lazy load the trained LSTM model and preprocessing components"""
+        if self._models_loaded:
+            return True
+            
+        if self._load_error:
+            raise self._load_error
+            
         try:
             model_path = settings.BASE_DIR / 'models'
+            
+            # Check if models directory exists
+            if not model_path.exists():
+                raise FileNotFoundError(f"Models directory not found at {model_path}")
             
             # Load the LSTM model
             model_file = model_path / 'subreddit_lstm_model.keras'
             if model_file.exists():
+                logger.info(f"Attempting to load model from: {model_file}")
                 self.model = load_model(str(model_file))
                 logger.info("LSTM model loaded successfully from .keras file")
             else:
                 # Fallback to .h5 file
                 model_file = model_path / 'subreddit_lstm_model.h5'
                 if model_file.exists():
+                    logger.info(f"Attempting to load model from: {model_file}")
                     self.model = load_model(str(model_file))
                     logger.info("LSTM model loaded successfully from .h5 file")
                 else:
-                    raise FileNotFoundError("No model file found")
+                    raise FileNotFoundError("No model file found (.keras or .h5)")
             
             # Load tokenizer
             tokenizer_file = model_path / 'tokenizer.pkl'
@@ -52,14 +65,22 @@ class MentalHealthPredictor:
                 logger.info("Label encoder loaded successfully")
             else:
                 raise FileNotFoundError("Label encoder file not found")
+            
+            self._models_loaded = True
+            return True
                 
         except Exception as e:
-            logger.error(f"Error loading models: {str(e)}")
-            raise
+            error_msg = f"Error loading models: {str(e)}"
+            logger.error(error_msg)
+            self._load_error = Exception(error_msg)
+            raise self._load_error
     
     def preprocess_text(self, text):
         """Preprocess text for model prediction"""
         try:
+            # Ensure models are loaded
+            self._lazy_load_models()
+            
             # Convert text to sequences using the tokenizer
             sequences = self.tokenizer.texts_to_sequences([text])
             
@@ -74,6 +95,9 @@ class MentalHealthPredictor:
     def predict(self, text):
         """Make prediction on input text"""
         try:
+            # Ensure models are loaded
+            self._lazy_load_models()
+            
             if not all([self.model, self.tokenizer, self.label_encoder]):
                 raise ValueError("Models not properly loaded")
             
@@ -99,6 +123,14 @@ class MentalHealthPredictor:
         except Exception as e:
             logger.error(f"Error making prediction: {str(e)}")
             raise
+    
+    def is_ready(self):
+        """Check if the predictor is ready to make predictions"""
+        try:
+            self._lazy_load_models()
+            return True
+        except Exception:
+            return False
 
-# Global instance
+# Global instance - models will be loaded lazily when first used
 predictor = MentalHealthPredictor()

@@ -34,6 +34,13 @@ class PredictMentalHealthView(APIView):
             
             text_input = serializer.validated_data['text']
             
+            # Check if models are ready
+            if not predictor.is_ready():
+                return Response(
+                    {'error': 'Model not available', 'message': 'Model files are missing or corrupted'},
+                    status=status.HTTP_503_SERVICE_UNAVAILABLE
+                )
+            
             # Make prediction
             prediction_result = predictor.predict(text_input)
             
@@ -86,8 +93,12 @@ def health_check(request):
     """
     Simple health check endpoint
     """
+    model_status = predictor.is_ready()
+    status_code = 200 if model_status else 503
+    
     return JsonResponse({
-        'status': 'healthy',
+        'status': 'healthy' if model_status else 'unhealthy',
         'message': 'Mental Health Prediction API is running',
-        'model_loaded': predictor.model is not None
-    })
+        'model_loaded': model_status,
+        'error': None if model_status else 'Model files not found or corrupted'
+    }, status=status_code)
