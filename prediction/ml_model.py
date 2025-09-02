@@ -1,12 +1,8 @@
 import os
 import pickle
 import numpy as np
-from tensorflow.keras.models import load_model
-from tensorflow.keras.preprocessing.sequence import pad_sequences
-from django.conf import settings
-import logging
 from pathlib import Path
-import tensorflow as tf
+import logging
 
 logger = logging.getLogger(__name__)
 
@@ -28,13 +24,25 @@ class MentalHealthPredictor:
             raise self._load_error
             
         try:
+            # Import TensorFlow here to avoid import errors at module level
+            try:
+                import tensorflow as tf
+                from tensorflow import keras
+                from tensorflow.keras.models import load_model
+                from tensorflow.keras.preprocessing.sequence import pad_sequences
+                print(f"DEBUG: TensorFlow version: {tf.__version__}")
+                print(f"DEBUG: Keras version: {keras.__version__}")
+            except ImportError as e:
+                error_msg = f"TensorFlow import failed: {str(e)}"
+                print(f"DEBUG: {error_msg}")
+                raise ImportError(error_msg)
+            
             # Get absolute path to models directory
             base_dir = Path(__file__).resolve().parent.parent
             model_path = base_dir / 'models'
             
             logger.info(f"Looking for models in: {model_path}")
             print(f"DEBUG: Looking for models in: {model_path}")
-            print(f"DEBUG: TensorFlow version: {tf.__version__}")
             
             # Check if models directory exists
             if not model_path.exists():
@@ -76,38 +84,26 @@ class MentalHealthPredictor:
                 logger.info(f"Loading tokenizer from: {tokenizer_file}")
                 print(f"DEBUG: Loading tokenizer from: {tokenizer_file}")
                 try:
-                    # Try loading with different pickle protocols
+                    # Try loading with different methods
                     with open(tokenizer_file, 'rb') as f:
                         self.tokenizer = pickle.load(f)
                     logger.info("Tokenizer loaded successfully")
                     print("DEBUG: Tokenizer loaded successfully")
-                    print(f"DEBUG: Tokenizer word_index size: {len(self.tokenizer.word_index) if hasattr(self.tokenizer, 'word_index') else 'N/A'}")
+                    print(f"DEBUG: Tokenizer type: {type(self.tokenizer)}")
+                    if hasattr(self.tokenizer, 'word_index'):
+                        print(f"DEBUG: Tokenizer word_index size: {len(self.tokenizer.word_index)}")
                 except Exception as e:
                     error_msg = f"Error loading tokenizer: {str(e)}"
                     logger.error(error_msg)
                     print(f"DEBUG: {error_msg}")
-                    
-                    # Try alternative loading method
-                    try:
-                        print("DEBUG: Trying alternative tokenizer loading method...")
-                        import sys
-                        sys.modules['keras.src'] = tf.keras  # Compatibility fix
-                        with open(tokenizer_file, 'rb') as f:
-                            self.tokenizer = pickle.load(f)
-                        logger.info("Tokenizer loaded with compatibility fix")
-                        print("DEBUG: Tokenizer loaded with compatibility fix")
-                    except Exception as e2:
-                        error_msg = f"All tokenizer loading methods failed: {str(e2)}"
-                        logger.error(error_msg)
-                        print(f"DEBUG: {error_msg}")
-                        raise Exception(error_msg)
+                    raise Exception(error_msg)
             else:
                 error_msg = f"Tokenizer file not found at {tokenizer_file}"
                 logger.error(error_msg)
                 print(f"DEBUG: {error_msg}")
                 raise FileNotFoundError(error_msg)
             
-            # Load the LSTM model with compatibility fixes
+            # Load the LSTM model with multiple fallback methods
             model_file = model_path / 'subreddit_lstm_model.keras'
             if model_file.exists():
                 logger.info(f"Loading model from: {model_file}")
@@ -115,32 +111,27 @@ class MentalHealthPredictor:
                 print(f"DEBUG: Model file size: {model_file.stat().st_size} bytes")
                 
                 try:
-                    # Add compatibility fixes for different TensorFlow versions
-                    import sys
-                    if 'keras.src' not in sys.modules:
-                        sys.modules['keras.src'] = tf.keras
-                    
-                    # Method 1: Standard load_model with compatibility
-                    print("DEBUG: Trying standard load_model...")
-                    self.model = load_model(str(model_file))
-                    logger.info("LSTM model loaded successfully")
-                    print("DEBUG: LSTM model loaded successfully")
+                    # Method 1: Try loading with compile=False first (most compatible)
+                    print("DEBUG: Trying to load with compile=False...")
+                    self.model = load_model(str(model_file), compile=False)
+                    logger.info("LSTM model loaded successfully with compile=False")
+                    print("DEBUG: LSTM model loaded successfully with compile=False")
                     
                 except Exception as e1:
-                    print(f"DEBUG: Standard load_model failed: {str(e1)}")
+                    print(f"DEBUG: Load with compile=False failed: {str(e1)}")
                     
                     try:
-                        # Method 2: Load with compile=False
-                        print("DEBUG: Trying to load with compile=False...")
-                        self.model = load_model(str(model_file), compile=False)
-                        logger.info("LSTM model loaded successfully with compile=False")
-                        print("DEBUG: LSTM model loaded successfully with compile=False")
+                        # Method 2: Try standard loading
+                        print("DEBUG: Trying standard load_model...")
+                        self.model = load_model(str(model_file))
+                        logger.info("LSTM model loaded successfully")
+                        print("DEBUG: LSTM model loaded successfully")
                         
                     except Exception as e2:
-                        print(f"DEBUG: Load with compile=False failed: {str(e2)}")
+                        print(f"DEBUG: Standard load_model failed: {str(e2)}")
                         
                         try:
-                            # Method 3: Try loading as .h5 if .keras fails
+                            # Method 3: Try loading as .h5 if available
                             h5_file = model_path / 'subreddit_lstm_model.h5'
                             if h5_file.exists():
                                 print(f"DEBUG: Trying .h5 file: {h5_file}")
@@ -148,7 +139,7 @@ class MentalHealthPredictor:
                                 logger.info("LSTM model loaded from .h5 file")
                                 print("DEBUG: LSTM model loaded from .h5 file")
                             else:
-                                error_msg = f"All model loading methods failed. Errors: keras={str(e1)}, compile=False={str(e2)}"
+                                error_msg = f"All model loading methods failed. Errors: compile=False={str(e1)}, standard={str(e2)}"
                                 logger.error(error_msg)
                                 print(f"DEBUG: {error_msg}")
                                 raise Exception(error_msg)
@@ -199,6 +190,9 @@ class MentalHealthPredictor:
     def preprocess_text(self, text):
         """Preprocess text for model prediction"""
         try:
+            # Import here to avoid module-level import issues
+            from tensorflow.keras.preprocessing.sequence import pad_sequences
+            
             # Ensure models are loaded
             self._lazy_load_models()
             
