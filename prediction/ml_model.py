@@ -26,8 +26,11 @@ class MentalHealthPredictor:
             raise self._load_error
             
         try:
-            model_path = settings.BASE_DIR / 'models'
-            
+            # Ubah path model ke folder models di root project
+            model_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'models'))
+            from pathlib import Path
+            model_path = Path(model_path)
+
             # Check if models directory exists
             if not model_path.exists():
                 raise FileNotFoundError(f"Models directory not found at {model_path}")
@@ -72,6 +75,7 @@ class MentalHealthPredictor:
         except Exception as e:
             error_msg = f"Error loading models: {str(e)}"
             logger.error(error_msg)
+            print(error_msg)  # Tambahkan ini untuk debugging di console
             self._load_error = Exception(error_msg)
             raise self._load_error
     
