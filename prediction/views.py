@@ -112,7 +112,7 @@ def health_check(request):
             'status': 'healthy' if model_status else 'unhealthy',
             'message': 'Mental Health Prediction API is running',
             'model_loaded': model_status,
-            'error': None if model_status else 'Model files not found or corrupted',
+            'error': None if model_status else str(predictor._load_error) if predictor._load_error else 'Model files not found or corrupted',
             'debug': debug_info
         }
         

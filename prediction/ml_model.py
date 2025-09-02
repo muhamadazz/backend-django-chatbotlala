@@ -7,6 +7,7 @@ from tensorflow.keras.preprocessing.text import Tokenizer
 from django.conf import settings
 import logging
 from pathlib import Path
+import tensorflow as tf
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +35,7 @@ class MentalHealthPredictor:
             
             logger.info(f"Looking for models in: {model_path}")
             print(f"DEBUG: Looking for models in: {model_path}")
+            print(f"DEBUG: TensorFlow version: {tf.__version__}")
             
             # Check if models directory exists
             if not model_path.exists():
@@ -47,38 +49,21 @@ class MentalHealthPredictor:
             logger.info(f"Files in models directory: {model_files}")
             print(f"DEBUG: Files in models directory: {model_files}")
             
-            # Load the LSTM model
-            model_file = model_path / 'subreddit_lstm_model.keras'
-            if model_file.exists():
-                logger.info(f"Loading model from: {model_file}")
-                print(f"DEBUG: Loading model from: {model_file}")
-                self.model = load_model(str(model_file))
-                logger.info("LSTM model loaded successfully from .keras file")
-                print("DEBUG: LSTM model loaded successfully")
-            else:
-                # Fallback to .h5 file
-                model_file = model_path / 'subreddit_lstm_model.h5'
-                if model_file.exists():
-                    logger.info(f"Loading model from: {model_file}")
-                    print(f"DEBUG: Loading model from: {model_file}")
-                    self.model = load_model(str(model_file))
-                    logger.info("LSTM model loaded successfully from .h5 file")
-                    print("DEBUG: LSTM model loaded successfully from .h5")
-                else:
-                    error_msg = f"No model file found at {model_path} (.keras or .h5)"
-                    logger.error(error_msg)
-                    print(f"DEBUG: {error_msg}")
-                    raise FileNotFoundError(error_msg)
-            
-            # Load tokenizer
+            # Load tokenizer first
             tokenizer_file = model_path / 'tokenizer.pkl'
             if tokenizer_file.exists():
                 logger.info(f"Loading tokenizer from: {tokenizer_file}")
                 print(f"DEBUG: Loading tokenizer from: {tokenizer_file}")
-                with open(tokenizer_file, 'rb') as f:
-                    self.tokenizer = pickle.load(f)
-                logger.info("Tokenizer loaded successfully")
-                print("DEBUG: Tokenizer loaded successfully")
+                try:
+                    with open(tokenizer_file, 'rb') as f:
+                        self.tokenizer = pickle.load(f)
+                    logger.info("Tokenizer loaded successfully")
+                    print("DEBUG: Tokenizer loaded successfully")
+                except Exception as e:
+                    error_msg = f"Error loading tokenizer: {str(e)}"
+                    logger.error(error_msg)
+                    print(f"DEBUG: {error_msg}")
+                    raise Exception(error_msg)
             else:
                 error_msg = f"Tokenizer file not found at {tokenizer_file}"
                 logger.error(error_msg)
@@ -90,12 +75,83 @@ class MentalHealthPredictor:
             if encoder_file.exists():
                 logger.info(f"Loading label encoder from: {encoder_file}")
                 print(f"DEBUG: Loading label encoder from: {encoder_file}")
-                with open(encoder_file, 'rb') as f:
-                    self.label_encoder = pickle.load(f)
-                logger.info("Label encoder loaded successfully")
-                print("DEBUG: Label encoder loaded successfully")
+                try:
+                    with open(encoder_file, 'rb') as f:
+                        self.label_encoder = pickle.load(f)
+                    logger.info("Label encoder loaded successfully")
+                    print("DEBUG: Label encoder loaded successfully")
+                except Exception as e:
+                    error_msg = f"Error loading label encoder: {str(e)}"
+                    logger.error(error_msg)
+                    print(f"DEBUG: {error_msg}")
+                    raise Exception(error_msg)
             else:
                 error_msg = f"Label encoder file not found at {encoder_file}"
+                logger.error(error_msg)
+                print(f"DEBUG: {error_msg}")
+                raise FileNotFoundError(error_msg)
+            
+            # Load the LSTM model with multiple approaches
+            model_file = model_path / 'subreddit_lstm_model.keras'
+            if model_file.exists():
+                logger.info(f"Loading model from: {model_file}")
+                print(f"DEBUG: Loading model from: {model_file}")
+                print(f"DEBUG: Model file size: {model_file.stat().st_size} bytes")
+                
+                try:
+                    # Method 1: Standard load_model
+                    self.model = load_model(str(model_file))
+                    logger.info("LSTM model loaded successfully with load_model")
+                    print("DEBUG: LSTM model loaded successfully with load_model")
+                    
+                except Exception as e1:
+                    print(f"DEBUG: Standard load_model failed: {str(e1)}")
+                    
+                    try:
+                        # Method 2: Load with compile=False
+                        print("DEBUG: Trying to load with compile=False")
+                        self.model = load_model(str(model_file), compile=False)
+                        logger.info("LSTM model loaded successfully with compile=False")
+                        print("DEBUG: LSTM model loaded successfully with compile=False")
+                        
+                    except Exception as e2:
+                        print(f"DEBUG: Load with compile=False failed: {str(e2)}")
+                        
+                        try:
+                            # Method 3: Load with custom options
+                            print("DEBUG: Trying to load with custom options")
+                            self.model = tf.keras.models.load_model(
+                                str(model_file),
+                                custom_objects=None,
+                                compile=False,
+                                safe_mode=False
+                            )
+                            logger.info("LSTM model loaded successfully with custom options")
+                            print("DEBUG: LSTM model loaded successfully with custom options")
+                            
+                        except Exception as e3:
+                            print(f"DEBUG: Load with custom options failed: {str(e3)}")
+                            
+                            # Try fallback to .h5 file
+                            h5_file = model_path / 'subreddit_lstm_model.h5'
+                            if h5_file.exists():
+                                print(f"DEBUG: Trying fallback .h5 file: {h5_file}")
+                                try:
+                                    self.model = load_model(str(h5_file))
+                                    logger.info("LSTM model loaded successfully from .h5 file")
+                                    print("DEBUG: LSTM model loaded successfully from .h5 file")
+                                except Exception as e4:
+                                    error_msg = f"All model loading methods failed. Last error: {str(e4)}"
+                                    logger.error(error_msg)
+                                    print(f"DEBUG: {error_msg}")
+                                    raise Exception(error_msg)
+                            else:
+                                error_msg = f"All model loading methods failed. Errors: keras={str(e1)}, compile=False={str(e2)}, custom={str(e3)}"
+                                logger.error(error_msg)
+                                print(f"DEBUG: {error_msg}")
+                                raise Exception(error_msg)
+            else:
+                error_msg = f"No .keras model file found at {model_file}"
                 logger.error(error_msg)
                 print(f"DEBUG: {error_msg}")
                 raise FileNotFoundError(error_msg)
