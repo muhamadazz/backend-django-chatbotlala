@@ -93,12 +93,36 @@ def health_check(request):
     """
     Simple health check endpoint
     """
-    model_status = predictor.is_ready()
-    status_code = 200 if model_status else 503
-    
-    return JsonResponse({
-        'status': 'healthy' if model_status else 'unhealthy',
-        'message': 'Mental Health Prediction API is running',
-        'model_loaded': model_status,
-        'error': None if model_status else 'Model files not found or corrupted'
-    }, status=status_code)
+    try:
+        model_status = predictor.is_ready()
+        status_code = 200 if model_status else 503
+        
+        # Additional debugging info
+        from pathlib import Path
+        base_dir = Path(__file__).resolve().parent.parent
+        model_path = base_dir / 'models'
+        
+        debug_info = {
+            'models_directory_exists': model_path.exists(),
+            'model_path': str(model_path),
+            'files_in_models': [f.name for f in model_path.glob('*')] if model_path.exists() else []
+        }
+        
+        response_data = {
+            'status': 'healthy' if model_status else 'unhealthy',
+            'message': 'Mental Health Prediction API is running',
+            'model_loaded': model_status,
+            'error': None if model_status else 'Model files not found or corrupted',
+            'debug': debug_info
+        }
+        
+        return JsonResponse(response_data, status=status_code)
+        
+    except Exception as e:
+        logger.error(f"Health check error: {str(e)}")
+        return JsonResponse({
+            'status': 'error',
+            'message': 'Health check failed',
+            'model_loaded': False,
+            'error': str(e)
+        }, status=503)
